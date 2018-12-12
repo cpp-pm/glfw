@@ -1,8 +1,14 @@
-cmake_minimum_required(VERSION 3.0)
+cmake_minimum_required(VERSION 3.8) # OpenGL::GL
+
+include("cmake/HunterGate.cmake")
+
+HunterGate(
+    URL "https://github.com/ruslo/hunter/archive/v0.19.77.tar.gz"
+    SHA1 "8898dd07756c408c63c63add903c8600c4cf4c0e"
+)
 
 project(GLFW C)
 
-set(CMAKE_LEGACY_CYGWIN_WIN32 OFF)
 
 if (POLICY CMP0054)
     cmake_policy(SET CMP0054 NEW)
@@ -53,13 +59,11 @@ else()
     set(GLFW_LIB_NAME glfw3)
 endif()
 
-if (GLFW_VULKAN_STATIC)
-    set(_GLFW_VULKAN_STATIC 1)
-endif()
-
-list(APPEND CMAKE_MODULE_PATH "${GLFW_SOURCE_DIR}/CMake/modules")
+list(APPEND CMAKE_MODULE_PATH "${GLFW_SOURCE_DIR}/cmake/modules")
 
 find_package(Threads REQUIRED)
+list(APPEND glfw_LIBRARIES Threads::Threads)
+
 find_package(Vulkan)
 
 if (GLFW_BUILD_DOCS)
@@ -135,6 +139,25 @@ if (MINGW)
     endif()
 endif()
 
+if (APPLE)
+    find_package(appkit REQUIRED)
+    find_package(coredata REQUIRED)
+    find_package(foundation REQUIRED)
+    find_package(metal REQUIRED)
+    find_package(quartzcore REQUIRED)
+
+    # Dependencies required by the MoltenVK static library
+    set(
+        GLFW_VULKAN_DEPS
+        "-lc++"
+        appkit::appkit
+        coredata::coredata
+        foundation::foundation
+        metal::metal
+        quartzcore::quartzcore
+    )
+endif()
+
 #--------------------------------------------------------------------
 # Detect and select backend APIs
 #--------------------------------------------------------------------
@@ -204,6 +227,9 @@ endif()
 #--------------------------------------------------------------------
 if (_GLFW_WIN32)
 
+    find_package(OpenGL REQUIRED)
+    list(APPEND glfw_LIBRARIES OpenGL::GL)
+
     list(APPEND glfw_PKG_LIBS "-lgdi32")
 
     if (GLFW_USE_HYBRID_HPG)
@@ -215,39 +241,16 @@ endif()
 # Use X11 for window creation
 #--------------------------------------------------------------------
 if (_GLFW_X11)
+    find_package(OpenGL REQUIRED)
+    list(APPEND glfw_LIBRARIES OpenGL::GL)
 
-    find_package(X11 REQUIRED)
+    foreach(dep xcursor xinerama xrandr xi)
+      hunter_add_package(${dep})
+      find_package(${dep} CONFIG REQUIRED)
 
-    list(APPEND glfw_PKG_DEPS "x11")
-
-    # Set up library and include paths
-    list(APPEND glfw_INCLUDE_DIRS "${X11_X11_INCLUDE_PATH}")
-    list(APPEND glfw_LIBRARIES "${X11_X11_LIB}" "${CMAKE_THREAD_LIBS_INIT}")
-
-    # Check for XRandR (modern resolution switching and gamma control)
-    if (NOT X11_Xrandr_FOUND)
-        message(FATAL_ERROR "The RandR headers were not found")
-    endif()
-
-    # Check for Xinerama (legacy multi-monitor support)
-    if (NOT X11_Xinerama_FOUND)
-        message(FATAL_ERROR "The Xinerama headers were not found")
-    endif()
-
-    # Check for Xkb (X keyboard extension)
-    if (NOT X11_Xkb_FOUND)
-        message(FATAL_ERROR "The X keyboard extension headers were not found")
-    endif()
-
-    # Check for Xcursor (cursor creation from RGBA images)
-    if (NOT X11_Xcursor_FOUND)
-        message(FATAL_ERROR "The Xcursor headers were not found")
-    endif()
-
-    list(APPEND glfw_INCLUDE_DIRS "${X11_Xrandr_INCLUDE_PATH}"
-                                  "${X11_Xinerama_INCLUDE_PATH}"
-                                  "${X11_Xkb_INCLUDE_PATH}"
-                                  "${X11_Xcursor_INCLUDE_PATH}")
+      list(APPEND glfw_LIBRARIES "PkgConfig::${dep}")
+      list(APPEND glfw_PKG_DEPS "PkgConfig::${dep}")
+    endforeach()
 endif()
 
 #--------------------------------------------------------------------
@@ -255,7 +258,7 @@ endif()
 #--------------------------------------------------------------------
 if (_GLFW_WAYLAND)
     find_package(ECM REQUIRED NO_MODULE)
-    list(APPEND CMAKE_MODULE_PATH "${ECM_MODULE_PATH}")
+    list(APPEND CMAKE_MODULE_PATH ${ECM_MODULE_PATH})
 
     find_package(Wayland REQUIRED Client Cursor Egl)
     find_package(WaylandScanner REQUIRED)
@@ -263,8 +266,8 @@ if (_GLFW_WAYLAND)
 
     list(APPEND glfw_PKG_DEPS "wayland-egl")
 
-    list(APPEND glfw_INCLUDE_DIRS "${Wayland_INCLUDE_DIRS}")
-    list(APPEND glfw_LIBRARIES "${Wayland_LIBRARIES}" "${CMAKE_THREAD_LIBS_INIT}")
+    list(APPEND glfw_INCLUDE_DIRS "${Wayland_INCLUDE_DIR}")
+    list(APPEND glfw_LIBRARIES "${Wayland_LIBRARIES}")
 
     find_package(XKBCommon REQUIRED)
     list(APPEND glfw_INCLUDE_DIRS "${XKBCOMMON_INCLUDE_DIRS}")
@@ -274,36 +277,58 @@ if (_GLFW_WAYLAND)
     check_include_files(xkbcommon/xkbcommon-compose.h HAVE_XKBCOMMON_COMPOSE_H)
     check_function_exists(memfd_create HAVE_MEMFD_CREATE)
 
-    if (NOT ("${CMAKE_SYSTEM_NAME}" STREQUAL "Linux"))
-        find_package(EpollShim)
-        if (EPOLLSHIM_FOUND)
-            list(APPEND glfw_INCLUDE_DIRS "${EPOLLSHIM_INCLUDE_DIRS}")
-            list(APPEND glfw_LIBRARIES "${EPOLLSHIM_LIBRARIES}")
-        endif()
-    endif()
+    list(APPEND glfw_INCLUDE_DIRS "${MIR_INCLUDE_DIRS}")
+    list(APPEND glfw_LIBRARIES "${MIR_LIBRARIES}")
+
+    find_package(XKBCommon REQUIRED)
+    list(APPEND glfw_PKG_DEPS "xkbcommon")
+    list(APPEND glfw_INCLUDE_DIRS "${XKBCOMMON_INCLUDE_DIRS}")
+    list(APPEND glfw_LIBRARIES "${XKBCOMMON_LIBRARY}")
 endif()
 
 #--------------------------------------------------------------------
 # Use OSMesa for offscreen context creation
 #--------------------------------------------------------------------
 if (_GLFW_OSMESA)
-    find_package(OSMesa REQUIRED)
-    list(APPEND glfw_LIBRARIES "${CMAKE_THREAD_LIBS_INIT}")
+    find_package(osmesa REQUIRED)
 endif()
 
 #--------------------------------------------------------------------
 # Use Cocoa for window creation and NSOpenGL for context creation
 #--------------------------------------------------------------------
 if (_GLFW_COCOA)
+    find_package(appkit REQUIRED)
+    find_package(coredata REQUIRED)
+    find_package(foundation REQUIRED)
+    find_package(iokit REQUIRED)
+    find_package(corefoundation REQUIRED)
+    find_package(corevideo REQUIRED)
 
-    list(APPEND glfw_LIBRARIES
-        "-framework Cocoa"
-        "-framework IOKit"
-        "-framework CoreFoundation"
-        "-framework CoreVideo")
+    list(
+        APPEND glfw_LIBRARIES
+        appkit::appkit
+        coredata::coredata
+        foundation::foundation
+        iokit::iokit
+        corefoundation::corefoundation
+        corevideo::corevideo
+    )
 
     set(glfw_PKG_DEPS "")
-    set(glfw_PKG_LIBS "-framework Cocoa -framework IOKit -framework CoreFoundation -framework CoreVideo")
+    set(
+        glfw_PKG_LIBS
+        appkit::appkit
+        coredata::coredata
+        foundation::foundation
+        iokit::iokit
+        corefoundation::corefoundation
+        corevideo::corevideo
+    )
+
+    if(NOT BUILD_SHARED_LIBS)
+      find_package(OpenGL REQUIRED)
+      list(APPEND glfw_LIBRARIES OpenGL::GL)
+    endif()
 endif()
 
 #--------------------------------------------------------------------
@@ -326,7 +351,7 @@ set(GLFW_CONFIG_PATH "${CMAKE_INSTALL_LIBDIR}/cmake/glfw3")
 configure_package_config_file(src/glfw3Config.cmake.in
                               src/glfw3Config.cmake
                               INSTALL_DESTINATION "${GLFW_CONFIG_PATH}"
-                              NO_CHECK_REQUIRED_COMPONENTS_MACRO)
+                              )
 
 write_basic_package_version_file(src/glfw3ConfigVersion.cmake
                                  VERSION ${GLFW_VERSION_FULL}
